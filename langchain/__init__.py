@@ -18,13 +18,14 @@ from langchain.chains import (
     VectorDBQAWithSourcesChain,
 )
 from langchain.docstore import InMemoryDocstore, Wikipedia
-from langchain.llms import Cohere, HuggingFaceHub, OpenAI
+from langchain.llms import Cohere, HuggingFaceHub, OpenAI, OpenAIPooled
 from langchain.llms.huggingface_pipeline import HuggingFacePipeline
 from langchain.prompts import (
     BasePromptTemplate,
     FewShotPromptTemplate,
     Prompt,
     PromptTemplate,
+    FewShotPromptTemplate2
 )
 from langchain.serpapi import SerpAPIChain, SerpAPIWrapper
 from langchain.sql_database import SQLDatabase
@@ -48,9 +49,11 @@ __all__ = [
     "WolframAlphaAPIWrapper",
     "Cohere",
     "OpenAI",
+    "OpenAIPooled",
     "BasePromptTemplate",
     "Prompt",
     "FewShotPromptTemplate",
+    "FewShotPromptTemplate2",
     "PromptTemplate",
     "ReActChain",
     "Wikipedia",

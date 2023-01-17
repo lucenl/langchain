@@ -10,16 +10,16 @@ from langchain.prompts.example_selector.base import BaseExampleSelector
 from langchain.vectorstores.base import VectorStore
 
 
-def sorted_values(values: Dict[str, str]) -> List[Any]:
+def sorted_values(values: Dict[str, str], keys=None) -> List[Any]:
     """Return a list of values in dict sorted by key."""
-    return [values[val] for val in sorted(values)]
-
+    return [values[val] for val in sorted(values) if keys is None or val in keys]
 
 class SemanticSimilarityExampleSelector(BaseExampleSelector, BaseModel):
     """Example selector that selects examples based on SemanticSimilarity."""
 
     vectorstore: VectorStore
     """VectorStore than contains information about examples."""
+    similarity_keys: Optional[List[str]] = None
     k: int = 4
     """Number of examples to select."""
     example_keys: Optional[List[str]] = None
@@ -33,14 +33,14 @@ class SemanticSimilarityExampleSelector(BaseExampleSelector, BaseModel):
 
     def add_example(self, example: Dict[str, str]) -> str:
         """Add new example to vectorstore."""
-        string_example = " ".join(sorted_values(example))
+        string_example = " ".join(sorted_values(example, self.similarity_keys))
         ids = self.vectorstore.add_texts([string_example], metadatas=[example])
         return ids[0]
 
     def select_examples(self, input_variables: Dict[str, str]) -> List[dict]:
         """Select which examples to use based on semantic similarity."""
         # Get the docs with the highest similarity.
-        query = " ".join(sorted_values(input_variables))
+        query = " ".join(sorted_values(input_variables, self.similarity_keys))
         example_docs = self.vectorstore.similarity_search(query, k=self.k)
         # Get the examples from the metadata.
         # This assumes that examples are stored in metadata.
@@ -56,6 +56,7 @@ class SemanticSimilarityExampleSelector(BaseExampleSelector, BaseModel):
         examples: List[dict],
         embeddings: Embeddings,
         vectorstore_cls: VectorStore,
+        similarity_keys: Optional[List[str]] = None,
         k: int = 4,
         **vectorstore_cls_kwargs: Any,
     ) -> SemanticSimilarityExampleSelector:
@@ -73,11 +74,11 @@ class SemanticSimilarityExampleSelector(BaseExampleSelector, BaseModel):
         Returns:
             The ExampleSelector instantiated, backed by a vector store.
         """
-        string_examples = [" ".join(sorted_values(eg)) for eg in examples]
+        string_examples = [" ".join(sorted_values(eg, similarity_keys)) for eg in examples]
         vectorstore = vectorstore_cls.from_texts(
             string_examples, embeddings, metadatas=examples, **vectorstore_cls_kwargs
         )
-        return cls(vectorstore=vectorstore, k=k)
+        return cls(vectorstore=vectorstore, similarity_keys=similarity_keys, k=k)
 
 
 class MaxMarginalRelevanceExampleSelector(SemanticSimilarityExampleSelector, BaseModel):
@@ -93,7 +94,7 @@ class MaxMarginalRelevanceExampleSelector(SemanticSimilarityExampleSelector, Bas
     def select_examples(self, input_variables: Dict[str, str]) -> List[dict]:
         """Select which examples to use based on semantic similarity."""
         # Get the docs with the highest similarity.
-        query = " ".join(sorted_values(input_variables))
+        query = " ".join(sorted_values(input_variables, self.similarity_keys))
         example_docs = self.vectorstore.max_marginal_relevance_search(
             query, k=self.k, fetch_k=self.fetch_k
         )
@@ -111,6 +112,7 @@ class MaxMarginalRelevanceExampleSelector(SemanticSimilarityExampleSelector, Bas
         examples: List[dict],
         embeddings: Embeddings,
         vectorstore_cls: VectorStore,
+        similarity_keys: Optional[List[str]] = None,
         k: int = 4,
         fetch_k: int = 20,
         **vectorstore_cls_kwargs: Any,
@@ -129,8 +131,8 @@ class MaxMarginalRelevanceExampleSelector(SemanticSimilarityExampleSelector, Bas
         Returns:
             The ExampleSelector instantiated, backed by a vector store.
         """
-        string_examples = [" ".join(sorted_values(eg)) for eg in examples]
+        string_examples = [" ".join(sorted_values(eg, similarity_keys)) for eg in examples]
         vectorstore = vectorstore_cls.from_texts(
             string_examples, embeddings, metadatas=examples, **vectorstore_cls_kwargs
         )
-        return cls(vectorstore=vectorstore, k=k, fetch_k=fetch_k)
+        return cls(vectorstore=vectorstore, similarity_keys=similarity_keys, k=k, fetch_k=fetch_k)

@@ -8,7 +8,7 @@ from langchain.input import get_colored_text
 from langchain.llms.base import BaseLLM
 from langchain.prompts.base import BasePromptTemplate
 from langchain.schema import LLMResult
-
+from rich import print
 
 class LLMChain(Chain, BaseModel):
     """Chain to run queries against LLMs.
@@ -61,15 +61,21 @@ class LLMChain(Chain, BaseModel):
         for inputs in input_list:
             selected_inputs = {k: inputs[k] for k in self.prompt.input_variables}
             prompt = self.prompt.format(**selected_inputs)
-            _colored_text = get_colored_text(prompt, "green")
-            _text = "Prompt after formatting:\n" + _colored_text
-            self.callback_manager.on_text(_text, end="\n", verbose=self.verbose)
+            if self.verbose:
+                _colored_text = get_colored_text(prompt, "green")
+                _text = "Prompt after formatting:\n" + _colored_text
+                self.callback_manager.on_text(_text, end="\n")
             if "stop" in inputs and inputs["stop"] != stop:
                 raise ValueError(
                     "If `stop` is present in any inputs, should be present in all."
                 )
             prompts.append(prompt)
         response = self.llm.generate(prompts, stop=stop)
+        if self.verbose:
+            for prompt, generation in zip(prompts, response.generations):
+                completion = generation[0].text
+                print('Prompt and Completion:')
+                print(f"[green]{prompt}[/green][red]{completion}[/red]")
         return response
 
     def apply(self, input_list: List[Dict[str, Any]]) -> List[Dict[str, str]]:
@@ -116,9 +122,9 @@ class LLMChain(Chain, BaseModel):
         result = self.apply(input_list)
         if self.prompt.output_parser is not None:
             new_result = []
-            for res in result:
+            for inputs, res in zip(input_list, result):
                 text = res[self.output_key]
-                new_result.append(self.prompt.output_parser.parse(text))
+                new_result.append(self.prompt.output_parser.parse(text, **inputs))
             return new_result
         else:
             return result

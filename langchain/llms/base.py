@@ -131,7 +131,10 @@ class BaseLLM(BaseModel, ABC):
 
     def __call__(self, prompt: str, stop: Optional[List[str]] = None) -> str:
         """Check Cache and run the LLM on the given prompt and input."""
-        return self.generate([prompt], stop=stop).generations[0][0].text
+        if isinstance(prompt, str):
+            return self.generate([prompt], stop=stop).generations[0][0].text
+        else:
+            return [g[0].text for g in self.generate(prompt, stop=stop).generations]
 
     @property
     def _identifying_params(self) -> Mapping[str, Any]:

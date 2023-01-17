@@ -139,6 +139,26 @@ class BasePromptTemplate(BaseModel, ABC):
         """Return a dictionary of the prompt."""
         return self.dict()
 
+    def parse_output(self, text: str, **kwargs) -> Union[str, List[str], Dict[str, str]]:
+        """Parse the output of an LLM call.
+
+        Args:
+            text: The output of an LLM call.
+
+        Returns:
+            The parsed output.
+
+        Example:
+
+        .. code-block:: python
+
+            prompt.parse_output("foo")
+        """
+        if self.output_parser is None:
+            return text
+        else:
+            return self.output_parser.parse(text, **kwargs)
+
     def save(self, file_path: Union[Path, str]) -> None:
         """Save the prompt.
 
