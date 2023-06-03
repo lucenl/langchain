@@ -52,9 +52,24 @@ class BaseOutputParser(ABC):
     """Class to parse the output of an LLM call."""
 
     @abstractmethod
-    def parse(self, text: str) -> Union[str, List[str], Dict[str, str]]:
+    def parse(self, lm_output: str) -> Union[str, List[str], Dict[str, str]]:
         """Parse the output of an LLM call."""
 
+# class BaseOutputProcessor(BaseOutputParser, ABC):
+#     """Class to check the correctness of the output of an LLM call."""
+
+#     def is_correct(self, prediction: str, label: str = None, target: str = None, **kwargs) -> bool:
+#         """Check the output of an LLM call."""
+#         assert label is not None or target is not None, "Either label or target must be provided."
+#         assert label is None or target is None, "Only one of label or target must be provided."
+#         if label is not None:
+#             return prediction.strip() == label
+#         else:
+#             return prediction.strip() == target
+
+# class NoopOutputProcessor(BaseOutputProcessor):
+#     def parse(self, lm_output: str, **kwargs) -> str:
+#         return lm_output
 
 class ListOutputParser(BaseOutputParser):
     """Class to parse the output of an LLM call to a list."""
@@ -139,7 +154,7 @@ class BasePromptTemplate(BaseModel, ABC):
         """Return a dictionary of the prompt."""
         return self.dict()
 
-    def parse_output(self, text: str, **kwargs) -> Union[str, List[str], Dict[str, str]]:
+    def parse_output(self, lm_output: str, **kwargs) -> Union[str, List[str], Dict[str, str]]:
         """Parse the output of an LLM call.
 
         Args:
@@ -155,9 +170,21 @@ class BasePromptTemplate(BaseModel, ABC):
             prompt.parse_output("foo")
         """
         if self.output_parser is None:
-            return text
+            return lm_output
         else:
-            return self.output_parser.parse(text, **kwargs)
+            return self.output_parser.parse(lm_output, **kwargs)
+
+    def check_output(self, prediction, label=None, target=None, **kwargs) -> bool:
+        # assert self.output_parser is not None, "No output processor defined."
+        # assert isinstance(self.output_parser, BaseOutputProcessor), "Output parser is not an output processor."
+        # return self.output_parser.is_correct(prediction, label=label, target=target, **kwargs)
+        assert label is not None or target is not None, "Either label or target must be provided."
+        assert label is None or target is None, "Only one of label or target must be provided."
+        if label is not None:
+            return prediction == label
+        else:
+            return prediction == target
+
 
     def save(self, file_path: Union[Path, str]) -> None:
         """Save the prompt.

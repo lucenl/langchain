@@ -7,7 +7,8 @@ from langchain.llms.cohere import Cohere
 from langchain.llms.huggingface_hub import HuggingFaceHub
 from langchain.llms.huggingface_pipeline import HuggingFacePipeline
 from langchain.llms.nlpcloud import NLPCloud
-from langchain.llms.openai import AzureOpenAI, OpenAI, OpenAIPooled
+from langchain.llms.openai import AzureOpenAI, OpenAI, OpenAIPooled, OpenAIChat
+from langchain.llms.alpa import OptAlpaServer
 
 __all__ = [
     "Cohere",
@@ -18,6 +19,7 @@ __all__ = [
     "HuggingFacePipeline",
     "AI21",
     "AzureOpenAI",
+    "OptAlpaServer"
 ]
 
 type_to_cls_dict: Dict[str, Type[BaseLLM]] = {
@@ -29,4 +31,5 @@ type_to_cls_dict: Dict[str, Type[BaseLLM]] = {
     "pooled_openai": OpenAIPooled,
     "huggingface_pipeline": HuggingFacePipeline,
     "azure": AzureOpenAI,
+    "optalpaserver": OptAlpaServer
 }

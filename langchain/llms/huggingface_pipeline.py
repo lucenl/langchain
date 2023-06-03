@@ -1,4 +1,6 @@
 """Wrapper around HuggingFace Pipeline APIs."""
+import importlib.util
+import logging
 from typing import Any, List, Mapping, Optional
 
 from pydantic import BaseModel, Extra
@@ -9,6 +11,8 @@ from langchain.llms.utils import enforce_stop_tokens
 DEFAULT_MODEL_ID = "gpt2"
 DEFAULT_TASK = "text-generation"
 VALID_TASKS = ("text2text-generation", "text-generation")
+
+logger = logging.getLogger()
 
 
 class HuggingFacePipeline(LLM, BaseModel):
@@ -21,14 +25,14 @@ class HuggingFacePipeline(LLM, BaseModel):
     Example using from_model_id:
         .. code-block:: python
 
-            from langchain.llms.huggingface_pipeline import HuggingFacePipeline
+            from langchain.llms import HuggingFacePipeline
             hf = HuggingFacePipeline.from_model_id(
                 model_id="gpt2", task="text-generation"
             )
     Example passing pipeline in directly:
         .. code-block:: python
 
-            from langchain.llms.huggingface_pipeline import HuggingFacePipeline
+            from langchain.llms import HuggingFacePipeline
             from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
             model_id = "gpt2"
@@ -56,6 +60,7 @@ class HuggingFacePipeline(LLM, BaseModel):
         cls,
         model_id: str,
         task: str,
+        device: int = -1,
         model_kwargs: Optional[dict] = None,
         **kwargs: Any,
     ) -> LLM:
@@ -68,8 +73,16 @@ class HuggingFacePipeline(LLM, BaseModel):
             )
             from transformers import pipeline as hf_pipeline
 
-            _model_kwargs = model_kwargs or {}
-            tokenizer = AutoTokenizer.from_pretrained(model_id, **_model_kwargs)
+        except ImportError:
+            raise ValueError(
+                "Could not import transformers python package. "
+                "Please it install it with `pip install transformers`."
+            )
+
+        _model_kwargs = model_kwargs or {}
+        tokenizer = AutoTokenizer.from_pretrained(model_id, **_model_kwargs)
+
+        try:
             if task == "text-generation":
                 model = AutoModelForCausalLM.from_pretrained(model_id, **_model_kwargs)
             elif task == "text2text-generation":
@@ -79,25 +92,47 @@ class HuggingFacePipeline(LLM, BaseModel):
                     f"Got invalid task {task}, "
                     f"currently only {VALID_TASKS} are supported"
                 )
-            pipeline = hf_pipeline(
-                task=task, model=model, tokenizer=tokenizer, model_kwargs=_model_kwargs
-            )
-            if pipeline.task not in VALID_TASKS:
-                raise ValueError(
-                    f"Got invalid task {pipeline.task}, "
-                    f"currently only {VALID_TASKS} are supported"
-                )
-            return cls(
-                pipeline=pipeline,
-                model_id=model_id,
-                model_kwargs=_model_kwargs,
-                **kwargs,
-            )
-        except ImportError:
+        except ImportError as e:
             raise ValueError(
-                "Could not import transformers python package. "
-                "Please it install it with `pip install transformers`."
+                f"Could not load the {task} model due to missing dependencies."
+            ) from e
+
+        if importlib.util.find_spec("torch") is not None:
+            import torch
+
+            cuda_device_count = torch.cuda.device_count()
+            if device < -1 or (device >= cuda_device_count):
+                raise ValueError(
+                    f"Got device=={device}, "
+                    f"device is required to be within [-1, {cuda_device_count})"
+                )
+            if device < 0 and cuda_device_count > 0:
+                logger.warning(
+                    "Device has %d GPUs available. "
+                    "Provide device={deviceId} to `from_model_id` to use available"
+                    "GPUs for execution. deviceId is -1 (default) for CPU and "
+                    "can be a positive integer associated with CUDA device id.",
+                    cuda_device_count,
+                )
+
+        pipeline = hf_pipeline(
+            task=task,
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            model_kwargs=_model_kwargs,
+        )
+        if pipeline.task not in VALID_TASKS:
+            raise ValueError(
+                f"Got invalid task {pipeline.task}, "
+                f"currently only {VALID_TASKS} are supported"
             )
+        return cls(
+            pipeline=pipeline,
+            model_id=model_id,
+            model_kwargs=_model_kwargs,
+            **kwargs,
+        )
 
     @property
     def _identifying_params(self) -> Mapping[str, Any]:
@@ -128,3 +163,83 @@ class HuggingFacePipeline(LLM, BaseModel):
             # stop tokens when making calls to huggingface_hub.
             text = enforce_stop_tokens(text, stop)
         return text
+
+def test():
+    import numpy as np
+    import pandas as pd
+    from functools import partial
+    from pathlib import Path
+
+    from datasets import load_dataset
+    from langchain import LLMChain, FewShotPromptTemplate2
+    from langchain.llms import HuggingFacePipeline
+    from langchain.llms.utils import enforce_stop_tokens
+    from transformers import pipeline
+    from selector.bm25 import BM25ExampleSelector, BM25ExampleSelectorArgs
+    from constants import Dataset as DS
+    from driver import get_dataset, get_templates
+
+    dataset, input_feature, train_split, test_split = DS.GEOQUERY, 'source', 'csl_template_1_train', 'csl_template_1_test'
+    # dataset, input_feature, train_split, test_split = DS.OVERNIGHT, 'paraphrase', 'socialnetwork_template_0_train', 'socialnetwork_template_0_test'
+    # dataset, input_feature, test_split = DS.BREAK, 'question_text', 'validation'
+    ds = get_dataset(dataset, data_root=Path('../data'))
+    candidates = ds[train_split].select(list(range(min(500, len(ds[train_split])))))
+    # example_template = SemparseExampleTemplate(input_variables=['question_text', 'decomposition'])
+    templates = get_templates(dataset, input_feature=input_feature)
+    example_template = templates['example_template']
+    n_shots = 16
+    substruct = 'ngram'
+    bm25_selector = BM25ExampleSelector.from_examples(
+        BM25ExampleSelectorArgs(substruct, 4, n_shots, depparser='spacy'),
+        candidates, example_template)
+    fewshot_prompt_fn = partial(FewShotPromptTemplate2,
+        input_variables=templates['example_template'].input_variables,
+        example_separator='\n\n', **templates)
+    bm25_prompt = fewshot_prompt_fn(example_selector=bm25_selector)
+
+    prompts = [bm25_prompt.format(**ex) for ex in ds['train']]
+
+    generation_kwargs = dict(
+        temperature=0.0, max_new_tokens=256, top_p=1.0)
+    model_id = 'EleutherAI/gpt-neo-2.7B'
+    device = 4
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = AutoModelForCausalLM.from_pretrained(model_id).to(device)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer.padding_side = "left"
+    if False:
+        inputs = tokenizer.encode(prompts[0], return_tensors="pt").to(device)
+        outputs = model.generate(inputs, **generation_kwargs)
+        generation = tokenizer.decode(outputs[0][inputs.shape[1]:], skip_special_tokens=True)
+        completion = enforce_stop_tokens(generation, stop=['\n']).strip()
+    inputs = tokenizer(prompts[:4], return_tensors="pt", padding=True, truncation=False).to(device)
+    outputs = model.generate(**inputs, **generation_kwargs, eos_token_id=tokenizer.encode("\n")[0],)[:, inputs.attention_mask.shape[1]:]
+    generation = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    completion = enforce_stop_tokens(generation, stop=['\n']).strip()
+    generations = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+    completions = [enforce_stop_tokens(g, stop=['\n']).strip() for g in generations]
+
+
+
+    # prompt_len = int(batch['attention_mask'].shape[1])
+    # completions = [
+    #     tokenizer.decode(output[prompt_len:]).strip(tokenizer.pad_token).strip()
+    #     for output in outputs]
+    # completion =
+
+
+
+
+    pipe = pipeline(task='text-generation', device=2, model='EleutherAI/gpt-neo-2.7B', return_full_text=False)
+    pipe.tokenizer.pad_token_id = pipe.model.config.eos_token_id
+    generated = pipe(prompts[:4], batch_size=4, max_new_tokens=256, top_p=1.0, temperature=0.0, do_sample=False, num_return_sequences=1)
+    completions = [enforce_stop_tokens(g[0]['generated_text'], stop=['\n'])
+                   for g in generated]
+
+    lm = HuggingFacePipeline.from_model_id(
+        model_id='EleutherAI/gpt-neo-2.7B', task='text-generation', device='2',
+        model_kwargs=dict(
+            temperature=0.0, max_new_tokens=256, top_p=1.0,
+            frequency_penalty=0.0, presence_penalty=0.0))

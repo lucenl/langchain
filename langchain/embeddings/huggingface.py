@@ -25,13 +25,13 @@ class HuggingFaceEmbeddings(BaseModel, Embeddings):
     model_name: str = DEFAULT_MODEL_NAME
     """Model name to use."""
 
-    def __init__(self, **kwargs: Any):
+    def __init__(self, device: str = 'cpu', **kwargs: Any):
         """Initialize the sentence_transformer."""
         super().__init__(**kwargs)
         try:
             import sentence_transformers
 
-            self.client = sentence_transformers.SentenceTransformer(self.model_name)
+            self.client = sentence_transformers.SentenceTransformer(self.model_name, device=device)
         except ImportError:
             raise ValueError(
                 "Could not import sentence_transformers python package. "

@@ -46,6 +46,7 @@ class FAISS(VectorStore):
         index: Any,
         docstore: Docstore,
         index_to_docstore_id: Dict[int, str],
+        device: str = 'cpu',
     ):
         """Initialize with necessary components."""
         self.embedding_function = embedding_function
@@ -168,6 +169,8 @@ class FAISS(VectorStore):
         texts: List[str],
         embedding: Embeddings,
         metadatas: Optional[List[dict]] = None,
+        device: str = 'cpu',
+        metric: str = 'L2',
         **kwargs: Any,
     ) -> FAISS:
         """Construct FAISS wrapper from raw documents.
@@ -189,7 +192,21 @@ class FAISS(VectorStore):
         """
         faiss = dependable_faiss_import()
         embeddings = embedding.embed_documents(texts)
-        index = faiss.IndexFlatL2(len(embeddings[0]))
+        # NOTE: embeddings from mpnet-v2 are normalized so argmin L2 distance is identical to argmax cosine similarity
+        if 'cuda' in device:
+            gpuid = 0 if device == 'cuda' else int(device.split(':')[1])
+            res = faiss.StandardGpuResources()
+            if metric == 'L2':
+                index = faiss.IndexFlatL2(len(embeddings[0]))
+            else:
+                index = faiss.IndexFlatIP(len(embeddings[0]))
+            index = faiss.index_cpu_to_gpu(res, gpuid, index)
+        else:
+            if metric == 'L2':
+                index = faiss.IndexFlatL2(len(embeddings[0]))
+            else:
+                index = faiss.IndexFlatIP(len(embeddings[0]))
+
         index.add(np.array(embeddings, dtype=np.float32))
         documents = []
         for i, text in enumerate(texts):

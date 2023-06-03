@@ -7,6 +7,7 @@ from langchain.chains.base import Chain
 from langchain.input import get_colored_text
 from langchain.llms.base import BaseLLM
 from langchain.prompts.base import BasePromptTemplate
+# from langchain.prompts import FewShotPromptTemplate2
 from langchain.schema import LLMResult
 from rich import print
 
@@ -59,8 +60,10 @@ class LLMChain(Chain, BaseModel):
             stop = input_list[0]["stop"]
         prompts = []
         for inputs in input_list:
-            selected_inputs = {k: inputs[k] for k in self.prompt.input_variables}
-            prompt = self.prompt.format(**selected_inputs)
+            if False:
+                selected_inputs = {k: inputs[k] for k in self.prompt.input_variables}
+                prompt = self.prompt.format(**selected_inputs)
+            prompt = self.prompt.format(**inputs)
             if self.verbose:
                 _colored_text = get_colored_text(prompt, "green")
                 _text = "Prompt after formatting:\n" + _colored_text
@@ -72,10 +75,11 @@ class LLMChain(Chain, BaseModel):
             prompts.append(prompt)
         response = self.llm.generate(prompts, stop=stop)
         if self.verbose:
-            for prompt, generation in zip(prompts, response.generations):
+            for inputs, prompt, generation in zip(input_list, prompts, response.generations):
                 completion = generation[0].text
                 print('Prompt and Completion:')
                 print(f"[green]{prompt}[/green][red]{completion}[/red]")
+                print(f'Inputs: {inputs}')
         return response
 
     def apply(self, input_list: List[Dict[str, Any]]) -> List[Dict[str, str]]:
@@ -85,7 +89,8 @@ class LLMChain(Chain, BaseModel):
         for generation in response.generations:
             # Get the text of the top generated string.
             response_str = generation[0].text
-            outputs.append({self.output_key: response_str})
+            # outputs.append({self.output_key: response_str})
+            outputs.append(response_str)
         return outputs
 
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, str]:
@@ -110,8 +115,8 @@ class LLMChain(Chain, BaseModel):
     def predict_and_parse(self, **kwargs: Any) -> Union[str, List[str], Dict[str, str]]:
         """Call predict and then parse the results."""
         result = self.predict(**kwargs)
-        if self.prompt.output_parser is not None:
-            return self.prompt.output_parser.parse(result)
+        if self.prompt.output_processor is not None:
+            return self.prompt.output_processor.parse(result)
         else:
             return result
 
@@ -120,11 +125,11 @@ class LLMChain(Chain, BaseModel):
     ) -> Sequence[Union[str, List[str], Dict[str, str]]]:
         """Call apply and then parse the results."""
         result = self.apply(input_list)
-        if self.prompt.output_parser is not None:
+        if self.prompt.output_processor is not None:
             new_result = []
             for inputs, res in zip(input_list, result):
                 text = res[self.output_key]
-                new_result.append(self.prompt.output_parser.parse(text, **inputs))
+                new_result.append(self.prompt.output_processor.parse(text, **inputs))
             return new_result
         else:
             return result

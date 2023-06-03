@@ -13,6 +13,7 @@ from langchain.llms.base import BaseLLM
 from langchain.schema import Generation, LLMResult
 from langchain.utils import get_from_dict_or_env
 from rich import print
+from langchain.utilities.track import track
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,8 @@ class OpenAIModel(BaseLLM, BaseModel):
     """Holds any model parameters valid for `create` call not explicitly specified."""
     batch_size: int = 20
     """Batch size to use when passing multiple documents to generate."""
+    base_delay: int = 15
+    """Base delay for exponential backoff after every completion."""
     request_timeout: Optional[Union[float, Tuple[float, float]]] = None
     """Timeout for requests to OpenAI completion API. Default is 600 seconds."""
     logit_bias: Optional[Dict[str, float]] = Field(default_factory=dict)
@@ -178,7 +181,6 @@ class OpenAIModel(BaseLLM, BaseModel):
         max_size = self.modelname_to_contextsize(self.model_name)
         return max_size - num_tokens
 
-DELAY = 15
 class BaseOpenAI(OpenAIModel):
     """Wrapper around OpenAI large language models.
 
@@ -197,9 +199,10 @@ class BaseOpenAI(OpenAIModel):
 
     client: Any  #: :meta private:
     openai_api_key: Optional[str] = None
-    delay: int = DELAY
+    delay: int = 15
     next_slot: int = time.time()
     keep_trying: bool = False
+    verbose: bool = False
 
     @root_validator()
     def validate_environment(cls, values: Dict) -> Dict:
@@ -225,23 +228,25 @@ class BaseOpenAI(OpenAIModel):
                 # print(f"Calling OpenAI API with {params}...")
                 b = time.time()
                 response = self.client.create(prompt=prompts, **params)
-                # response = self.client.create(
-                #     prompt=prompts,
-                #     engine=self.model_name,
-                #     temperature=self.temperature,
-                #     max_tokens=self.max_tokens,
-                #     top_p=self.top_p,
-                #     frequency_penalty=self.frequency_penalty,
-                #     presence_penalty=self.presence_penalty,
-                #     n=self.n,
-                #     stop=params['stop'])
-                print(f"OpenAI API call took {time.time() - b:.2f}s.")
-                self.delay = DELAY
+                if False:
+                    response = self.client.create(
+                        prompt=prompts,
+                        engine=self.model_name,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                        top_p=self.top_p,
+                        frequency_penalty=self.frequency_penalty,
+                        presence_penalty=self.presence_penalty,
+                        n=self.n,
+                        stop=params['stop'])
+                if False: print(f"OpenAI API call took {time.time() - b:.2f}s.")
+                self.delay = self.base_delay
                 self.next_slot = b + self.delay
                 return response
-            except (openai.error.RateLimitError, openai.error.ServiceUnavailableError) as e:
-                self.delay *= 2
+            except (openai.error.RateLimitError, openai.error.ServiceUnavailableError, openai.error.APIError) as e:
+                self.delay = min(self.base_delay * 8, self.delay * 2)
                 self.next_slot = b + self.delay
+                # if self.keep_trying or not isinstance(e, openai.error.RateLimitError):
                 if self.keep_trying:
                     pause.until(self.next_slot)
                     continue
@@ -292,6 +297,7 @@ class BaseOpenAI(OpenAIModel):
         # Includes prompt, completion, and total tokens used.
         _keys = {"completion_tokens", "prompt_tokens", "total_tokens"}
         for i, _prompts in enumerate(sub_prompts):
+            # breakpoint()
             response = self._get_response(_prompts, params)
             for choice in response.choices:
                 choices[i * self.batch_size + choice.index].append(choice)
@@ -343,7 +349,191 @@ class BaseOpenAI(OpenAIModel):
         return generator
 
 
+class BaseOpenAIChat(OpenAIModel):
+    """Wrapper around OpenAI large language models.
+
+    To use, you should have the ``openai`` python package installed, and the
+    environment variable ``OPENAI_API_KEY`` set with your API key.
+
+    Any parameters that are valid to be passed to the openai.create call can be passed
+    in, even if not explicitly saved on this class.
+
+    Example:
+        .. code-block:: python
+
+            from langchain import OpenAI
+            openai = OpenAI(model_name="text-davinci-003")
+    """
+
+    client: Any  #: :meta private:
+    openai_api_key: Optional[str] = None
+    delay: int = 15
+    next_slot: int = time.time()
+    keep_trying: bool = False
+    verbose: bool = False
+
+    @root_validator()
+    def validate_environment(cls, values: Dict) -> Dict:
+        """Validate that api key and python package exists in environment."""
+        openai_api_key = get_from_dict_or_env(
+            values, "openai_api_key", "OPENAI_API_KEY"
+        )
+        try:
+            import openai
+
+            openai.api_key = openai_api_key
+            values["client"] = openai.ChatCompletion
+        except ImportError:
+            raise ValueError(
+                "Could not import openai python package. "
+                "Please it install it with `pip install openai`."
+            )
+        return values
+
+    def _get_response(self, prompts: list[str], params):
+        assert len(prompts) == 1
+        prompt = prompts[0]
+        messages = []
+        ex_str_l = prompt.split('\n\n')
+        for i, ex_str in enumerate(ex_str_l):
+            input_str = ex_str[:ex_str.rfind('\n')]
+            output_str = ex_str[ex_str.rfind('\n')+1:]
+            messages.append({"role": "user", "content": input_str})
+            if i != len(ex_str_l) - 1:
+                messages.append({"role": "assistant", "content": output_str})
+        while True:
+            try:
+                # print(f"Calling OpenAI API with {params}...")
+                b = time.time()
+                response = self.client.create(messages=messages, **params)
+                if False:
+                    response = self.client.create(
+                        prompt=prompts,
+                        engine=self.model_name,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                        top_p=self.top_p,
+                        frequency_penalty=self.frequency_penalty,
+                        presence_penalty=self.presence_penalty,
+                        n=self.n,
+                        stop=params['stop'])
+                if False: print(f"OpenAI API call took {time.time() - b:.2f}s.")
+                self.delay = self.base_delay
+                self.next_slot = b + self.delay
+                return response
+            except (openai.error.RateLimitError, openai.error.ServiceUnavailableError, openai.error.APIError) as e:
+                self.delay = min(self.base_delay * 8, self.delay * 2)
+                self.next_slot = b + self.delay
+                # if self.keep_trying or not isinstance(e, openai.error.RateLimitError):
+                if self.keep_trying:
+                    pause.until(self.next_slot)
+                    continue
+                else:
+                    raise e
+            # Raise exceptions for any errors not specified
+            except Exception as e:
+                raise e
+
+    def _generate(
+        self, prompts: List[str], stop: Optional[List[str]] = None
+    ) -> LLMResult:
+        """Call out to OpenAI's endpoint with k unique prompts.
+
+        Args:
+            prompts: The prompts to pass into the model.
+            stop: Optional list of stop words to use when generating.
+
+        Returns:
+            The full LLM output.
+
+        Example:
+            .. code-block:: python
+
+                response = openai.generate(["Tell me a joke."])
+        """
+        # TODO: write a unit test for this
+        params = self._invocation_params
+        if stop is not None:
+            if "stop" in params:
+                raise ValueError("`stop` found in both the input and default params.")
+            params["stop"] = stop
+
+        if params["max_tokens"] == -1:
+            if len(prompts) != 1:
+                raise ValueError(
+                    "max_tokens set to -1 not supported for multiple inputs."
+                )
+            params["max_tokens"] = self.max_tokens_for_prompt(prompts[0])
+        sub_prompts = [
+            prompts[i : i + self.batch_size]
+            for i in range(0, len(prompts), self.batch_size)
+        ]
+        # choices = []
+        choices = {i: [] for i in range(len(prompts))}
+        token_usage = {}
+        # Get the token usage from the response.
+        # Includes prompt, completion, and total tokens used.
+        _keys = {"completion_tokens", "prompt_tokens", "total_tokens"}
+        for i, _prompts in track(enumerate(sub_prompts), total=len(sub_prompts), disable=not self.verbose):
+            response = self._get_response(_prompts, params)
+            for choice in response.choices:
+                choices[i * self.batch_size + choice.index].append(choice)
+            # choices.extend(response["choices"])
+            _keys_to_use = _keys.intersection(response["usage"])
+            for _key in _keys_to_use:
+                if _key not in token_usage:
+                    token_usage[_key] = response["usage"][_key]
+                else:
+                    token_usage[_key] += response["usage"][_key]
+        generations = [[Generation(text=choice["message"]["content"], generation_info=choice)
+                        for choice in choices[i]]
+                       for i in range(len(prompts))]
+        # for i, prompt in enumerate(prompts):
+        #     sub_choices = choices[i * self.n : (i + 1) * self.n]
+        #     generations.append(
+        #         [Generation(text=choice["text"], generation_info=choice)
+        #          for choice in sub_choices]
+        #     )
+        return LLMResult(
+            generations=generations, llm_output={"token_usage": token_usage}
+        )
+
+    def stream(self, prompt: str) -> Generator:
+        """Call OpenAI with streaming flag and return the resulting generator.
+
+        BETA: this is a beta feature while we figure out the right abstraction.
+        Once that happens, this interface could change.
+
+        Args:
+            prompt: The prompts to pass into the model.
+
+        Returns:
+            A generator representing the stream of tokens from OpenAI.
+
+        Example:
+            .. code-block:: python
+
+                generator = openai.stream("Tell me a joke.")
+                for token in generator:
+                    yield token
+        """
+        params = self._invocation_params
+        if params["best_of"] != 1:
+            raise ValueError("OpenAI only supports best_of == 1 for streaming")
+        params["stream"] = True
+        generator = self.client.create(prompt=prompt, **params)
+
+        return generator
+
+
 class OpenAI(BaseOpenAI):
+    """Generic OpenAI class that uses model name."""
+
+    @property
+    def _invocation_params(self) -> Dict[str, Any]:
+        return {**{"model": self.model_name}, **super()._invocation_params}
+
+class OpenAIChat(BaseOpenAIChat):
     """Generic OpenAI class that uses model name."""
 
     @property
@@ -374,6 +564,7 @@ class OpenAIPooled(OpenAIModel):
     openai_api_keys: Optional[list[str]] = None
     usage: list[int] = []
     success: list[int] = []
+    verbose: bool = False
 
     @root_validator()
     def validate_environment(cls, values: Dict) -> Dict:
@@ -400,19 +591,33 @@ class OpenAIPooled(OpenAIModel):
         # https://github.com/openai/openai-cookbook/blob/main/examples/How_to_handle_rate_limits.ipynb
         while True:
             try:
+                if False: print(f'Using endpoint {self.endpoints[0].openai_api_key} in {max(0, self.endpoints[0].next_slot - time.time()):.2f}s for {len(prompts)} prompts. Usage: {self.usage}. Success: {self.success}. ({sum(self.success)}/{sum(self.usage)})')
                 idx, endpoint = min(enumerate(self.endpoints), key=lambda e: e[1].next_slot)
-                print(f'Using endpoint {idx} in {max(0, endpoint.next_slot - time.time()):.2f}s for {len(prompts)} prompts. Usage: {self.usage}. Success: {self.success}. ({sum(self.success)}/{sum(self.usage)})')
+                if self.verbose:
+                    print(f'Using endpoint {idx} in {max(0, endpoint.next_slot - time.time()):.2f}s for {len(prompts)} prompts. Usage: {self.usage}. Success: {self.success}. ({sum(self.success)}/{sum(self.usage)})')
                 self.usage[idx] += 1
                 slot = endpoint.next_slot
                 pause.until(slot)
                 result = endpoint._generate(prompts, stop)
-                print(f'Endpoint {idx} completed {len(prompts)} prompts')
+                if self.verbose:
+                    print(f'Endpoint {idx} completed {len(prompts)} prompts')
                 self.success[idx] += 1
                 return result
-            except (openai.error.RateLimitError, openai.error.ServiceUnavailableError) as e:
+            except (openai.error.RateLimitError, openai.error.ServiceUnavailableError, openai.error.APIError) as e:
                 error_message = e._message[e._message.find('Limit:'):e._message.find(' Contact')] if isinstance(e, openai.error.RateLimitError) else e._message
-                print(f'Endpoint [red]{idx}[/red] failed: {error_message} - will wait for [red]{endpoint.next_slot - time.time():.2f}[/red]s')
+                if self.verbose:
+                    print(f'Endpoint [red]{idx}[/red] failed: {error_message} - will wait for [red]{endpoint.next_slot - time.time():.2f}[/red]s')
                 continue
             # Raise exceptions for any errors not specified
             except Exception as e:
                 raise e
+
+def test():
+    from langchain.llms.openai import OpenAIPooled
+    llm = OpenAIPooled(
+        openai_api_keys=[l.strip() for l in open('../../openai_keys.txt').readlines()],
+        batch_size=7, request_timeout=100,
+        frequency_penalty=0, presence_penalty=0,
+        model_name='code-davinci-002', max_tokens=100,
+        top_p=1, temperature=0.7, verbose=True)
+    llm.generate(['This is it!'] * 42, stop=['\n'])
