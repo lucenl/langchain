@@ -108,6 +108,12 @@ class BaseLLM(BaseModel, ABC):
         generations = [existing_prompts[i] for i in range(len(prompts))]
         return LLMResult(generations=generations, llm_output=new_results.llm_output)
 
+    def classify(self, prompts: list[str], choices: list[str]) -> list[str]:
+        return self._classify(prompts, choices)
+
+    def classify_v2(self, prompts: list[str], choices: list[str], **kwargs) -> list[str]:
+        return self._classify_v2(prompts, choices, **kwargs)
+
     def get_num_tokens(self, text: str) -> int:
         """Get the number of tokens present in the text."""
         # TODO: this method may not be exact.

@@ -148,6 +148,7 @@ class FewShotPromptTemplate2(BasePromptTemplate, BaseModel):
     """The format of the prompt template. Options are: 'f-string', 'jinja2'."""
 
     max_len: int = -1
+    subtract_gen_len: bool = False
     enc_len_fn: Any = None
 
     lm: str = 'EleutherAI/gpt-neo-2.7B'
@@ -233,11 +234,19 @@ class FewShotPromptTemplate2(BasePromptTemplate, BaseModel):
                 if k in self.prefix_template.input_variables})
         suffix = self.suffix_template.format(**{k:kwargs[k] for k in kwargs
                 if k in self.suffix_template.input_variables})
-        if self.max_len != -1:
-            while self.enc_len_fn(self.make_prompt(
-                prefix, example_strings, test_example_string, suffix)
-            ) > self.max_len:
-                example_strings = example_strings[1:]
+        max_len = self.max_len
+        if max_len != -1:
+            if not self.subtract_gen_len:
+                while self.enc_len_fn(self.make_prompt(
+                    prefix, example_strings, test_example_string, suffix)
+                ) > max_len:
+                    example_strings = example_strings[1:]
+            else:
+                test_example_string_completed = self.example_template.format(**kwargs)
+                while self.enc_len_fn(self.make_prompt(
+                    prefix, example_strings, test_example_string_completed, suffix)
+                ) > max_len:
+                    example_strings = example_strings[1:]
             # print(f'reduced examples from {len(examples)} to {len(example_strings)}')
         prompt = self.make_prompt(prefix, example_strings, test_example_string, suffix)
         if return_demos:

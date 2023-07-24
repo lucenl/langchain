@@ -4,11 +4,12 @@ import sys
 import time
 import pause
 import openai
-
+import numpy as np
 from typing import Any, Dict, Generator, List, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel, Extra, Field, root_validator
 
+from more_itertools import chunked
 from langchain.llms.base import BaseLLM
 from langchain.schema import Generation, LLMResult
 from langchain.utils import get_from_dict_or_env
@@ -256,6 +257,74 @@ class BaseOpenAI(OpenAIModel):
             except Exception as e:
                 raise e
 
+    def _agg_token_usage(self, token_usage: Dict[str, int], response) -> Dict[str, int]:
+        # Get the token usage from the response.
+        # Includes prompt, completion, and total tokens used.
+        _keys = {"completion_tokens", "prompt_tokens", "total_tokens"}
+        _keys_to_use = _keys.intersection(response["usage"])
+        for _key in _keys_to_use:
+            if _key not in token_usage:
+                token_usage[_key] = response["usage"][_key]
+            else:
+                token_usage[_key] += response["usage"][_key]
+
+    def _call_openai(self, prompts: List[str], params):
+        choices = {i: [] for i in range(len(prompts))}
+        token_usage = {}
+        for batch_idx, _prompts in enumerate(chunked(prompts, self.batch_size)):
+            response = self._get_response(_prompts, params)
+            for choice in response.choices:
+                choices[batch_idx * self.batch_size + choice.index].append(choice)
+            self._agg_token_usage(token_usage, response)
+        return choices, token_usage
+
+    def _get_ppl(self, choice):
+        lens = len(choice['logprobs']['tokens'])
+        ce_loss = sum(choice['logprobs']['token_logprobs'][1:])
+        return ce_loss / (lens-1)  # no logprob on first token
+
+    def _ppls(self, texts: list[str]) -> list[float]:
+        params = self._invocation_params
+        params['max_tokens'] = 0
+        params['echo'] = True
+        params['logprobs'] = 1
+        completions, _ = self._call_openai(texts, params)
+        ppls = [self._get_ppl(completions[i][0]) for i in range(len(texts))]
+        return ppls
+
+    def _classify(self, prompts: list[str], choices: list[str]) -> list[str]:
+        params = llm._invocation_params
+        params['max_tokens'] = 1
+        params['echo'] = False
+        params['logprobs'] = 5
+        completions, _ = self._call_openai(prompts, params)
+        answers = []
+        for i in range(len(prompts)):
+            top_logprobs = completions[i][0]['logprobs']['top_logprobs'][0]
+            curr_answer, curr_logprob = None, -1e9
+            for tok, logprob in top_logprobs.items():
+                if tok.strip() in choices and (logprob > curr_logprob):
+                    curr_answer, curr_logprob = tok.strip(), logprob
+            if curr_answer is None:
+                print(f"Warning: could not classify prompt {prompts[i]}")
+            answers.append(curr_answer)
+        return answers
+
+    def _classify_v2(
+        self, prompts: list[str], choices: list[str]
+    ) -> list[list[float]]:
+        params = self._invocation_params
+        params['max_tokens'] = 0
+        params['echo'] = True
+        params['logprobs'] = 1
+
+        losses = np.empty(shape=(len(prompts), len(choices)))
+        for j, choice in enumerate(choices):
+            texts  = [prompt + choice for prompt in prompts]
+            losses[:, j] = self._ppls(texts)
+        choice_idxs = losses.argmax(axis=-1)
+        return [choices[choice_idxs[i]] for i in range(len(prompts))]
+
     def _generate(
         self, prompts: List[str], stop: Optional[List[str]] = None
     ) -> LLMResult:
@@ -286,28 +355,7 @@ class BaseOpenAI(OpenAIModel):
                     "max_tokens set to -1 not supported for multiple inputs."
                 )
             params["max_tokens"] = self.max_tokens_for_prompt(prompts[0])
-        sub_prompts = [
-            prompts[i : i + self.batch_size]
-            for i in range(0, len(prompts), self.batch_size)
-        ]
-        # choices = []
-        choices = {i: [] for i in range(len(prompts))}
-        token_usage = {}
-        # Get the token usage from the response.
-        # Includes prompt, completion, and total tokens used.
-        _keys = {"completion_tokens", "prompt_tokens", "total_tokens"}
-        for i, _prompts in enumerate(sub_prompts):
-            # breakpoint()
-            response = self._get_response(_prompts, params)
-            for choice in response.choices:
-                choices[i * self.batch_size + choice.index].append(choice)
-            # choices.extend(response["choices"])
-            _keys_to_use = _keys.intersection(response["usage"])
-            for _key in _keys_to_use:
-                if _key not in token_usage:
-                    token_usage[_key] = response["usage"][_key]
-                else:
-                    token_usage[_key] += response["usage"][_key]
+        choices, token_usage = self._call_openai(prompts, params)
         generations = [[Generation(text=choice["text"], generation_info=choice)
                         for choice in choices[i]]
                        for i in range(len(prompts))]
@@ -390,17 +438,25 @@ class BaseOpenAIChat(OpenAIModel):
             )
         return values
 
-    def _get_response(self, prompts: list[str], params):
+    def _get_response(self, prompts: list[str] | list[list[tuple[str, str]]], params):
         assert len(prompts) == 1
         prompt = prompts[0]
-        messages = []
-        ex_str_l = prompt.split('\n\n')
-        for i, ex_str in enumerate(ex_str_l):
-            input_str = ex_str[:ex_str.rfind('\n')]
-            output_str = ex_str[ex_str.rfind('\n')+1:]
-            messages.append({"role": "user", "content": input_str})
-            if i != len(ex_str_l) - 1:
-                messages.append({"role": "assistant", "content": output_str})
+        if isinstance(prompt, str):
+            messages = []
+            ex_str_l = prompt.split('\n\n')
+            for i, ex_str in enumerate(ex_str_l):
+                input_str = ex_str[:ex_str.rfind('\n')]
+                output_str = ex_str[ex_str.rfind('\n')+1:]
+                messages.append({"role": "user", "content": input_str})
+                if i != len(ex_str_l) - 1:
+                    messages.append({"role": "assistant", "content": output_str})
+        else:
+            messages = []
+            for i, (input_str, output_str) in enumerate(prompt):
+                messages.append({"role": "user", "content": input_str})
+                if i != len(prompt) - 1:
+                    messages.append({"role": "assistant", "content": output_str})
+
         while True:
             try:
                 # print(f"Calling OpenAI API with {params}...")
@@ -435,7 +491,7 @@ class BaseOpenAIChat(OpenAIModel):
                 raise e
 
     def _generate(
-        self, prompts: List[str], stop: Optional[List[str]] = None
+        self, prompts: List[str] | list[tuple[str, str]], stop: Optional[List[str]] = None
     ) -> LLMResult:
         """Call out to OpenAI's endpoint with k unique prompts.
 
@@ -612,12 +668,49 @@ class OpenAIPooled(OpenAIModel):
             except Exception as e:
                 raise e
 
-def test():
-    from langchain.llms.openai import OpenAIPooled
-    llm = OpenAIPooled(
-        openai_api_keys=[l.strip() for l in open('../../openai_keys.txt').readlines()],
-        batch_size=7, request_timeout=100,
-        frequency_penalty=0, presence_penalty=0,
-        model_name='code-davinci-002', max_tokens=100,
-        top_p=1, temperature=0.7, verbose=True)
-    llm.generate(['This is it!'] * 42, stop=['\n'])
+if __name__ == '__main__':
+    if False:
+        from langchain.llms.openai import OpenAIPooled
+        llm = OpenAIPooled(
+            # openai_api_keys=[l.strip() for l in open('../../openai_keys.txt').readlines()],
+            openai_api_keys=[key], base_delay=2,
+            batch_size=7, request_timeout=100,
+            frequency_penalty=0, presence_penalty=0,
+            model_name='code-davinci-002', max_tokens=100,
+            top_p=1, temperature=0.7, verbose=True)
+        llm.generate(['This is it!'] * 42, stop=['\n'])
+    if True:
+        # from langchain.llms.openai import OpenAI
+        llm = OpenAI(
+            # openai_api_keys=[l.strip() for l in open('../../openai_keys.txt').readlines()],
+            openai_api_key=key, base_delay=2,
+            batch_size=7, request_timeout=100,
+            frequency_penalty=0, presence_penalty=0,
+            model_name='code-davinci-002', max_tokens=100,
+            top_p=1, temperature=0, verbose=True)
+        prompts, choices = ['This is a '] * 10, ['cat', 'because']
+        lp = llm.logprobs(prompts, choices)
+
+        params = llm._invocation_params
+        params['max_tokens'] = 1
+        params['echo'] = False
+        params['logprobs'] = 5
+        res = llm._get_response(prompt, params)
+        losses_l = []
+        for idx, prompt in enumerate(prompts):
+            _choices = [choices[idx]] if isinstance(choices[0], list) else choices
+            responses = [llm._get_response(prompt + c, params) for c in _choices]
+            losses = np.array([llm.extract_loss(r) for r in responses])
+            losses_l.append(losses)
+
+        params = llm._invocation_params
+        params['max_tokens'] = 0
+        params['echo'] = True
+        params['logprobs'] = 1
+        losses_l = []
+        for idx, prompt in enumerate(prompts):
+            _choices = [choices[idx]] if isinstance(choices[0], list) else choices
+            responses = [llm._get_response(prompt + c, params) for c in _choices]
+            losses = np.array([llm.extract_loss(r) for r in responses])
+            losses_l.append(losses)
+        print(lp)
