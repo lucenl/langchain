@@ -22,6 +22,7 @@ context_length_limit = {
     'llama-7B': 2048,
     'llama-13B': 2048,
     'bigcode/starcoder': 8192,
+    'bigcode/starcoderbase': 8192,
 }
 
 def get_ssd():
@@ -76,10 +77,10 @@ class HuggingFace(LLM, BaseModel):
 
             _model_kwargs = model_kwargs or {}
             if 'llama' not in model_name:
-                if model_name != 'bigcode/starcoder':
+                if 'starcoder' not in model_name:
                     tokenizer = AutoTokenizer.from_pretrained(model_name, **_model_kwargs, use_auth_token=True)
                 else:
-                    starcoder_path = get_ssd() / 'bigcode/starcoder'
+                    starcoder_path = get_ssd() / model_name
                     tokenizer = AutoTokenizer.from_pretrained(starcoder_path, **_model_kwargs, use_auth_token=True)
             else:
                 from transformers import LlamaTokenizer
@@ -94,7 +95,7 @@ class HuggingFace(LLM, BaseModel):
             if task == "text-generation":
                 # if model_name == 'togethercomputer/GPT-JT-6B-v1':
                 if 'llama' not in model_name:
-                    if model_name != 'bigcode/starcoder':
+                    if 'starcoder' not in model_name:
                         model = AutoModelForCausalLM.from_pretrained(
                             model_name, torch_dtype=torch.float16, **_model_kwargs, use_auth_token=True)
                     else:

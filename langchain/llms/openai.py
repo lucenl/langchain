@@ -5,7 +5,7 @@ import time
 import pause
 import openai
 import numpy as np
-from typing import Any, Dict, Generator, List, Mapping, Optional, Tuple, Union
+from typing import Generator, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel, Extra, Field, root_validator
 
@@ -438,25 +438,9 @@ class BaseOpenAIChat(OpenAIModel):
             )
         return values
 
-    def _get_response(self, prompts: list[str] | list[list[tuple[str, str]]], params):
+    def _get_response(self, prompts: list[list[dict[str, str]]], params):
         assert len(prompts) == 1
-        prompt = prompts[0]
-        if isinstance(prompt, str):
-            messages = []
-            ex_str_l = prompt.split('\n\n')
-            for i, ex_str in enumerate(ex_str_l):
-                input_str = ex_str[:ex_str.rfind('\n')]
-                output_str = ex_str[ex_str.rfind('\n')+1:]
-                messages.append({"role": "user", "content": input_str})
-                if i != len(ex_str_l) - 1:
-                    messages.append({"role": "assistant", "content": output_str})
-        else:
-            messages = []
-            for i, (input_str, output_str) in enumerate(prompt):
-                messages.append({"role": "user", "content": input_str})
-                if i != len(prompt) - 1:
-                    messages.append({"role": "assistant", "content": output_str})
-
+        messages = prompts[0]
         while True:
             try:
                 # print(f"Calling OpenAI API with {params}...")
@@ -491,7 +475,7 @@ class BaseOpenAIChat(OpenAIModel):
                 raise e
 
     def _generate(
-        self, prompts: List[str] | list[tuple[str, str]], stop: Optional[List[str]] = None
+        self, prompts: list[list[dict[str, str]]], stop: Optional[list[str]] = None
     ) -> LLMResult:
         """Call out to OpenAI's endpoint with k unique prompts.
 
