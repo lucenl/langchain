@@ -25,18 +25,20 @@ context_length_limit = {
     'bigcode/starcoderbase': 8192,
 }
 
-def get_ssd():
+def get_model_cache_dir():
     if Path('/srv/nvme0/ucinlp/shivag5/').exists():
         return Path('/srv/nvme0/ucinlp/shivag5/')
     elif Path('/srv/disk01/ucinlp/shivag5/').exists():
         return Path('/srv/disk01/ucinlp/shivag5/')
+    elif Path('/persist/Documents/research/gisting/.cache/').exists():
+        return Path('/persist/Documents/research/gisting/.cache/')
     else:
-        raise ValueError('No SSD found')
+        raise ValueError('No model cache directory found')
 
 
 def llama_path(model_size: str = '7B'):
-    if (get_ssd() / f'llama_hf/{model_size}').exists():
-        return get_ssd() / f'llama_hf/{model_size}'
+    if (get_model_cache_dir() / f'llama_hf/{model_size}').exists():
+        return get_model_cache_dir() / f'llama_hf/{model_size}'
     else:
         raise ValueError(f'Invalid llama path: {model_size}')
 
@@ -80,7 +82,7 @@ class HuggingFace(LLM, BaseModel):
                 if 'starcoder' not in model_name:
                     tokenizer = AutoTokenizer.from_pretrained(model_name, **_model_kwargs, use_auth_token=True)
                 else:
-                    starcoder_path = get_ssd() / model_name
+                    starcoder_path = get_model_cache_dir() / model_name
                     tokenizer = AutoTokenizer.from_pretrained(starcoder_path, **_model_kwargs, use_auth_token=True)
             else:
                 from transformers import LlamaTokenizer
@@ -89,7 +91,7 @@ class HuggingFace(LLM, BaseModel):
                 elif '30B' in model_name: model_size = '30B'
                 elif '65B' in model_name: model_size = '65B'
                 else: raise ValueError(f'Invalid llama model: {model_name}')
-                llama_path = get_ssd() / f'llama_hf/{model_size}'
+                llama_path = get_model_cache_dir() / f'llama_hf/{model_size}'
                 tokenizer = LlamaTokenizer.from_pretrained(llama_path, **_model_kwargs)
 
             if task == "text-generation":

@@ -5,7 +5,7 @@ import time
 import pause
 import openai
 import numpy as np
-from typing import Generator, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, List, Generator, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel, Extra, Field, root_validator
 

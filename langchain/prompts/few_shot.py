@@ -141,9 +141,6 @@ class FewShotPromptTemplate2(BasePromptTemplate, BaseModel):
     example_separator: str = "\n\n"
     """String separator used to join the prefix, the examples, and suffix."""
 
-    input_variables: List[str]
-    """A list of the names of the variables the prompt template expects."""
-
     template_format: str = "f-string"
     """The format of the prompt template. Options are: 'f-string', 'jinja2'."""
 
