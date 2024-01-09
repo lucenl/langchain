@@ -23,6 +23,8 @@ context_length_limit = {
     'llama-13B': 2048,
     'bigcode/starcoder': 8192,
     'bigcode/starcoderbase': 8192,
+    'mistralai/Mistral-7B-v0.1': 8192,
+    'HuggingFaceH4/zephyr-7b-alpha': 8192,
 }
 
 def get_model_cache_dir():
@@ -251,6 +253,20 @@ class HuggingFace(LLM, BaseModel):
             losses[:, j] = self._ppls(texts)
         choice_idxs = losses.argmax(axis=-1)
         answers = [choices[choice_idxs[i]] for i in range(len(prompts))]
+        if not return_losses: return answers
+        else: return answers, losses
+
+    def _classify_v3(
+        self, prompts: list[str], choices: list[list[str]], return_losses: bool = False
+    ) -> list[str]:
+        self.tokenizer.padding_side = 'left'
+        losses, answers = [], []
+        for prompt, _choices in zip(prompts, choices):
+            texts = [prompt + choice for choice in _choices]
+            ppls = self._ppls(texts)
+            choice_idxs = ppls.argmax()
+            losses.append(ppls)
+            answers.append(_choices[choice_idxs])
         if not return_losses: return answers
         else: return answers, losses
 

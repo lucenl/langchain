@@ -5,7 +5,7 @@ import time
 import pause
 import openai
 import numpy as np
-from typing import Any, Dict, List, Generator, Mapping, Optional, Tuple, Union
+from typing import Generator, Mapping, Optional, Tuple, Union, Dict, Any, List
 
 from pydantic import BaseModel, Extra, Field, root_validator
 
@@ -223,7 +223,7 @@ class BaseOpenAI(OpenAIModel):
             )
         return values
 
-    def _get_response(self, prompts: List[str], params):
+    def _get_response(self, prompts: str | List[str], params):
         while True:
             try:
                 # print(f"Calling OpenAI API with {params}...")
@@ -271,11 +271,16 @@ class BaseOpenAI(OpenAIModel):
     def _call_openai(self, prompts: List[str], params):
         choices = {i: [] for i in range(len(prompts))}
         token_usage = {}
-        for batch_idx, _prompts in enumerate(chunked(prompts, self.batch_size)):
-            response = self._get_response(_prompts, params)
-            for choice in response.choices:
-                choices[batch_idx * self.batch_size + choice.index].append(choice)
-            self._agg_token_usage(token_usage, response)
+        if self.batch_size == 1:
+            for i, prompt in enumerate(prompts):
+                response = self._get_response(prompt, params)
+                choices[i].extend(response.choices)
+        else:
+            for batch_idx, _prompts in enumerate(chunked(prompts, self.batch_size)):
+                response = self._get_response(_prompts, params)
+                for choice in response.choices:
+                    choices[batch_idx * self.batch_size + choice.index].append(choice)
+        self._agg_token_usage(token_usage, response)
         return choices, token_usage
 
     def _get_ppl(self, choice):
@@ -289,7 +294,7 @@ class BaseOpenAI(OpenAIModel):
         params['echo'] = True
         params['logprobs'] = 1
         completions, _ = self._call_openai(texts, params)
-        ppls = [self._get_ppl(completions[i][0]) for i in range(len(texts))]
+        ppls = np.array([self._get_ppl(completions[i][0]) for i in range(len(texts))])
         return ppls
 
     def _classify(self, prompts: list[str], choices: list[str]) -> list[str]:
@@ -324,6 +329,19 @@ class BaseOpenAI(OpenAIModel):
             losses[:, j] = self._ppls(texts)
         choice_idxs = losses.argmax(axis=-1)
         return [choices[choice_idxs[i]] for i in range(len(prompts))]
+
+    def _classify_v3(
+        self, prompts: list[str], choices: list[list[str]], return_losses: bool = False
+    ) -> list[str]:
+        losses, answers = [], []
+        for prompt, _choices in zip(prompts, choices):
+            texts = [prompt + choice for choice in _choices]
+            ppls = self._ppls(texts)
+            choice_idxs = ppls.argmax()
+            losses.append(ppls)
+            answers.append(_choices[choice_idxs])
+        if not return_losses: return answers
+        else: return answers, losses
 
     def _generate(
         self, prompts: List[str], stop: Optional[List[str]] = None
@@ -438,9 +456,11 @@ class BaseOpenAIChat(OpenAIModel):
             )
         return values
 
-    def _get_response(self, prompts: list[list[dict[str, str]]], params):
+    def _get_response(self, prompts: list[list[dict[str, str]]] | list[str], params):
         assert len(prompts) == 1
         messages = prompts[0]
+        if isinstance(messages, str):
+            messages = [{"role": "user", "content": messages}]
         while True:
             try:
                 # print(f"Calling OpenAI API with {params}...")
@@ -475,7 +495,7 @@ class BaseOpenAIChat(OpenAIModel):
                 raise e
 
     def _generate(
-        self, prompts: list[list[dict[str, str]]], stop: Optional[list[str]] = None
+        self, prompts: list[list[dict[str, str]]] | list[str], stop: Optional[list[str]] = None
     ) -> LLMResult:
         """Call out to OpenAI's endpoint with k unique prompts.
 
