@@ -33,7 +33,7 @@ def get_model_cache_dir():
     else:
         raise ValueError('No model cache directory found')
 
-def llama_path(model_size: str = '7B'):
+def llama_path():
     if (get_model_cache_dir()).exists():
         return get_model_cache_dir()
     else:
