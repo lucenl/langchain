@@ -28,14 +28,11 @@ context_length_limit = {
 }
 
 def get_model_cache_dir():
-    if Path('/srv/nvme0/ucinlp/shivag5/').exists():
-        return Path('/srv/nvme0/ucinlp/shivag5/')
-    elif Path('/srv/disk01/ucinlp/shivag5/').exists():
-        return Path('/srv/disk01/ucinlp/shivag5/')
-    elif Path('/persist/Documents/research/gisting/.cache/').exists():
-        return Path('/persist/Documents/research/gisting/.cache/')
+    if Path('/home/lucenl/llama/llama2-huggingface/').exists():
+        return Path('/home/lucenl/llama/llama2-huggingface/')
     else:
         raise ValueError('No model cache directory found')
+
 
 
 def llama_path(model_size: str = '7B'):
