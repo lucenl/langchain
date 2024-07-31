@@ -33,13 +33,11 @@ def get_model_cache_dir():
     else:
         raise ValueError('No model cache directory found')
 
-
-
 def llama_path(model_size: str = '7B'):
-    if (get_model_cache_dir() / f'llama_hf/{model_size}').exists():
-        return get_model_cache_dir() / f'llama_hf/{model_size}'
+    if (get_model_cache_dir()).exists():
+        return get_model_cache_dir()
     else:
-        raise ValueError(f'Invalid llama path: {model_size}')
+        raise ValueError(f'Invalid llama path: {get_model_cache_dir()}')
 
 class HuggingFace(LLM, BaseModel):
     model: Any
