@@ -83,12 +83,7 @@ class HuggingFace(LLM, BaseModel):
                     tokenizer = AutoTokenizer.from_pretrained(starcoder_path, **_model_kwargs, use_auth_token=True)
             else:
                 from transformers import LlamaTokenizer
-                if '7B' in model_name: model_size = '7B'
-                elif '13B' in model_name: model_size = '13B'
-                elif '30B' in model_name: model_size = '30B'
-                elif '65B' in model_name: model_size = '65B'
-                else: raise ValueError(f'Invalid llama model: {model_name}')
-                llama_path = get_model_cache_dir() / f'llama_hf/{model_size}'
+                llama_path = get_model_cache_dir()
                 tokenizer = LlamaTokenizer.from_pretrained(llama_path, **_model_kwargs)
 
             if task == "text-generation":
