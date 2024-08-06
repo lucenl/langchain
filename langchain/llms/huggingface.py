@@ -28,8 +28,8 @@ context_length_limit = {
 }
 
 def get_model_cache_dir():
-    if Path('/home/lucenl/llama/llama2-huggingface/').exists():
-        return Path('/home/lucenl/llama/llama2-huggingface/')
+    if Path('/home/lucenl/llama/llama-2-7b-chat-converted/').exists():
+        return Path('/home/lucenl/llama/llama-2-7b-chat-converted/')
     else:
         raise ValueError('No model cache directory found')
 
