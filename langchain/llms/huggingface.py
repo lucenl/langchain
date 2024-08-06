@@ -75,7 +75,7 @@ class HuggingFace(LLM, BaseModel):
             )
 
             _model_kwargs = model_kwargs or {}
-            if 'llama' not in model_name:
+            if True or 'llama' not in model_name:
                 if 'starcoder' not in model_name:
                     tokenizer = AutoTokenizer.from_pretrained(model_name, **_model_kwargs, use_auth_token=True)
                 else:
