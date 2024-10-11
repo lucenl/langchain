@@ -28,8 +28,9 @@ context_length_limit = {
 }
 
 def get_model_cache_dir():
-    if Path('/home/lucenl/llama/llama-2-7b-chat-converted/').exists():
-        return Path('/home/lucenl/llama/llama-2-7b-chat-converted/')
+    # Change to your models directory
+    if Path('/home/models/llama/llama-2-13b-chat-converted/').exists():
+        return Path('/home/models/llama/llama-2-13b-chat-converted/')
     else:
         raise ValueError('No model cache directory found')
 
@@ -275,7 +276,7 @@ class HuggingFace(LLM, BaseModel):
             #     breakpoint()
             assert inputs.attention_mask.shape[1] + gen_kwargs['max_new_tokens'] <= context_length_limit[self.model_name]
             with torch.no_grad():
-                outputs = self.model.generate(**inputs, **self.generation_kwargs)
+                outputs = self.model.generate(**inputs, **self.generation_kwargs, pad_token_id=self.tokenizer.eos_token_id)
             if self.task == "text-generation":
                 outputs = outputs[:, inputs.attention_mask.shape[1]:]
             generations = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
